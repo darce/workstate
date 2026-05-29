@@ -1,0 +1,16 @@
+#!/bin/sh
+# Git pre-commit hook: hard-block commits on non-conforming branch
+# names (implementation note implementation note). Override with
+# AGENTIC_ALLOW_NONCONFORMING_BRANCH=1 (audited; never blocks the
+# commit when set). Pre-push enforces a separate gate that does NOT
+# inherit this override (implementation note).
+#
+# Installed via the bootstrap installer, which sets core.hooksPath to
+# scripts/hooks/git per implementation note.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [ -z "$REPO_ROOT" ]; then
+    exit 0
+fi
+
+exec python3 "$REPO_ROOT/scripts/hooks/check_branch_naming.py" --trigger pre-commit

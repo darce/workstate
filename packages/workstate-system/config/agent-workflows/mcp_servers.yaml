@@ -1,0 +1,36 @@
+# packages/workstate-system/config/agent-workflows/mcp_servers.yaml
+#
+# Canonical MCP server registration manifest for the workstate-system plugin
+# distribution generator (WORKSTATE-REF-01). The generator emits Claude and Codex
+# plugin trees whose `mcpServers` blocks are produced verbatim from this
+# file plus the bootstrap-side `type: stdio` shape pinned in
+# packages/workstate-bootstrap/src/workstate_bootstrap/install.py.
+#
+# Pins are transcribed by hand from `.mcp.json` (gitignored). The two
+# files serve different consumers (live developer config vs. emitted
+# plugin manifests) and may diverge later, so they intentionally are not
+# auto-derived from one another.
+#
+# `plugin_version` is the single source for the emitted plugin.json
+# `"version"` field. Bump in lockstep with epic phase rollouts; see
+# packages/workstate-system/docs/agentic/adrs/ADR-001-agentic-plugin-distribution.md.
+
+version: 1
+plugin_version: "0.2.0"
+mcp_servers:
+  - name: workstate-handoff-mcp
+    command: uvx
+    args:
+      - mcp-workstate-handoff@0.11.5
+      - --workspace-root
+      - .
+      - serve-stdio
+    harnesses: [claude, codex]
+  - name: workstate-orchestrator-mcp
+    command: uvx
+    args:
+      - mcp-workstate-orchestrator@0.4.7
+      - --workspace-root
+      - .
+      - serve-stdio
+    harnesses: [claude, codex]

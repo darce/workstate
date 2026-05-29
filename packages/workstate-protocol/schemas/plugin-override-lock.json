@@ -1,0 +1,111 @@
+{
+  "$defs": {
+    "PluginOverrideLockEntry": {
+      "additionalProperties": false,
+      "description": "Tracked provenance for one consumer-owned plugin override.",
+      "properties": {
+        "component_kind": {
+          "enum": [
+            "skill",
+            "command",
+            "mcp_server"
+          ],
+          "title": "Component Kind",
+          "type": "string"
+        },
+        "local_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Local Path"
+        },
+        "mode": {
+          "enum": [
+            "replace",
+            "disable",
+            "add",
+            "patch"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "patch_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Patch Path"
+        },
+        "upstream_digest": {
+          "anyOf": [
+            {
+              "pattern": "^sha256:[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Upstream Digest"
+        }
+      },
+      "required": [
+        "component_kind",
+        "name",
+        "mode"
+      ],
+      "title": "PluginOverrideLockEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Source-controlled lockfile for plugin overrides.",
+  "properties": {
+    "base_remote_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Base Remote Sha",
+      "type": "string"
+    },
+    "components": {
+      "items": {
+        "$ref": "#/$defs/PluginOverrideLockEntry"
+      },
+      "title": "Components",
+      "type": "array"
+    },
+    "plugin": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "title": "Plugin",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "plugin",
+    "base_remote_sha"
+  ],
+  "title": "PluginOverrideLock",
+  "type": "object"
+}

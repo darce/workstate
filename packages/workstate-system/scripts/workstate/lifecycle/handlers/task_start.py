@@ -1,0 +1,836 @@
+"""Mutating ``task-start`` subcommand (implementation note implementation note).
+
+Creates a conforming feature branch from a supplied task ref. The first
+sub-slice (3.2) covers ``MODE=here`` — the branch is created in the
+current repo and HEAD is moved to it. ``MODE=worktree`` (implementation note.3) and
+linked-worktree reuse (implementation note.4) extend this body.
+
+Receipt schema follows §JSON Receipt Schema in
+``docs/plans/0009-git-first-lifecycle-primitives.md`` plus the
+task-start additive fields ``mode`` / ``created_branch`` /
+``reused_worktree`` / ``plan_path``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import datetime as _dt
+import re
+import sys
+from collections.abc import Iterable, Mapping
+from pathlib import Path
+from typing import Any, Literal
+
+import projection
+import resolver
+import uv_provisioning
+
+from . import _common
+from .plan_baseline import build_acceptance_next_command, evaluate_plan_baseline
+
+_VALID_MODES = ("worktree", "here", "auto", "claim")
+
+
+def _utc_stamp() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _read_workspace_summary_view(repo: Path) -> _common.WorkspaceSummaryView:
+    """Derive the workspace summary view via ``render-handoff --no-write``.
+
+    WORKSTATE-REF-54-FU implementation note: the on-disk ``CURRENT_TASK.json`` is no longer
+    the source of truth for the ambiguity guard. Each call derives the
+    view from MCP's live state through the pure-read
+    ``render_handoff(kind='current_task', write_file=False)`` path,
+    eliminating the stale-projection failure mode that motivated the
+    WORKSTATE-REF-54 split.
+
+    Fail-open semantics (CLI unavailable, malformed envelope, parse
+    error → ``shape="none"``) match the prior file-based reader.
+    """
+    return _common.derive_workspace_summary_view(repo)
+
+
+def _read_active_state(repo: Path) -> dict[str, Any]:
+    """Best-effort read of the live ``active`` block.
+
+    Returns the per-task payload only when the workspace summary
+    resolves to ``shape="single"``; ``workspace_ambiguous`` and
+    ``none`` both yield an empty dict so plan-path lookup degrades to
+    "no active plan" rather than picking an arbitrary listed task.
+    """
+    view = _read_workspace_summary_view(repo)
+    if view.shape == "single" and isinstance(view.active, dict):
+        return view.active
+    return {}
+
+
+def _emit_error(
+    reason: str,
+    *,
+    task_ref: str | None = None,
+    branch: str = "",
+    events: list[str] | None = None,
+    handoff_projection: str = "error",
+    conflict_kind: str | None = None,
+    conflict_category: str | None = None,
+    plan_path: str | None = None,
+    plan_baseline: dict[str, Any] | None = None,
+    recovery_kind: str | None = None,
+    safe_next_commands: list[dict[str, str]] | None = None,
+    worktree_path: str = "",
+    head: str = "",
+) -> int:
+    receipt: dict[str, Any] = {
+        "ok": False,
+        "command": "task-start",
+        "task_ref": task_ref,
+        "branch": branch,
+        "worktree_path": worktree_path,
+        "head": head,
+        "handoff_projection": handoff_projection,
+        "events": events if events is not None else [],
+        "mode": "",
+        "created_branch": False,
+        "reused_worktree": False,
+        "plan_path": plan_path,
+        "plan_baseline": plan_baseline,
+        "recovery_kind": recovery_kind,
+        "conflict_kind": conflict_kind,
+        "conflict_category": conflict_category,
+        "error": reason,
+    }
+    if safe_next_commands is not None:
+        receipt["safe_next_commands"] = safe_next_commands
+    _common.emit(receipt)
+    return 2
+
+
+def _checkout_branch_here(repo: Path, branch: str) -> bool:
+    """Create+checkout ``branch`` in ``repo``. Returns True when created."""
+    proc = _common.run_subprocess(
+        ["git", "-C", str(repo), "checkout", "-q", "-b", branch]
+    )
+    return proc.returncode == 0
+
+
+def _current_branch(repo: Path) -> str:
+    """Return the currently checked-out branch in ``repo`` or ''."""
+    proc = _common.run_subprocess(["git", "-C", str(repo), "branch", "--show-current"])
+    if proc.returncode != 0:
+        return ""
+    return (proc.stdout or "").strip()
+
+
+def _rollback_branch_here(repo: Path, previous_branch: str, branch: str) -> None:
+    """Best-effort teardown for a here-mode branch created earlier in this run.
+
+    Mirrors ``_rollback_linked_worktree`` for ``MODE=here``: when uv sync
+    fails after we created+checked-out the feature branch in the current
+    repo, switch back to the prior branch (if known) and delete the new
+    branch so the caller does not stay parked on a half-started lifecycle.
+    """
+    if previous_branch:
+        _common.run_subprocess(
+            ["git", "-C", str(repo), "checkout", "-q", previous_branch]
+        )
+    _common.run_subprocess(["git", "-C", str(repo), "branch", "-D", branch])
+
+
+def _derive_worktree_path(primary: Path, task_ref: str) -> Path:
+    """Sibling-of-primary convention: ``<primary>-<task-ref-lower>``.
+
+    Mirrors the WORKSTATE-REF-40 worktree layout already in use by this repo
+    (``workstate`` + ``-WORKSTATE-40``). Stays sibling-only
+    so the linked worktree never nests inside the primary tree.
+    """
+    return primary.parent / f"{primary.name}-{task_ref.lower()}"
+
+
+def _find_linked_worktree_for_branch(primary: Path, branch: str) -> Path | None:
+    """Return the path of the linked worktree owning ``branch``, or None.
+
+    Skips the primary worktree itself so a checked-out branch on the
+    main repo never masks a real linked worktree pickup.
+    """
+    primary_str = str(primary)
+    for entry in resolver.linked_worktrees(primary):
+        if entry.get("branch") == branch and entry.get("path") != primary_str:
+            path = entry.get("path")
+            if isinstance(path, str) and path:
+                return Path(path)
+    return None
+
+
+_ConflictKind = Literal[
+    "same_task_elsewhere",
+    "branch_collision",
+    "worktree_path_collision",
+    "mode_here_implementation_conflict",
+    "claim_existing_worktree",
+]
+
+
+@dataclasses.dataclass(frozen=True)
+class _RealConflict:
+    """Structured task-start refusal cause (WORKSTATE-REF-66).
+
+    ``category`` partitions the kinds: ``"collision"`` for name clashes
+    detectable from git/filesystem state alone (branch / worktree path),
+    ``"policy"`` for worktree-singleton-class rules (same task already
+    live elsewhere / MODE=here against another implementation primary),
+    and ``"recoverable"`` (WORKSTATE-REF-05) for the claim path — the requested
+    task's own branch already has an unowned linked worktree, which the
+    caller can adopt via ``MODE=claim`` rather than being told to delete
+    it. See ``docs/agentic/rules/development-workflow.md`` §Task-Start
+    Identity Resolution.
+    """
+
+    kind: _ConflictKind
+    category: Literal["collision", "policy", "recoverable"]
+    message: str
+    conflicting_task_ref: str | None = None
+    conflicting_branch: str | None = None
+    conflicting_path: str | None = None
+
+
+def _existing_worktree_owner(
+    live: Iterable[Mapping[str, Any]],
+    *,
+    task_ref: str,
+    existing_path: Path,
+) -> str | None:
+    """Return the task_ref of a *different* live row claiming ``existing_path``.
+
+    WORKSTATE-REF-05 implementation note: an existing linked worktree on the requested branch
+    is only a hard ``branch_collision`` when some other live task already
+    owns that exact worktree path. Otherwise it is an unowned worktree
+    the caller may claim. Ownership is decided purely by
+    ``target_worktree_path`` equality so a stale branch label on the
+    worktree never masks a genuine cross-task claim.
+    """
+    existing_str = str(existing_path)
+    for row in live:
+        if not isinstance(row, Mapping):
+            continue
+        row_ref = row.get("task_ref")
+        if not isinstance(row_ref, str) or not row_ref or row_ref == task_ref:
+            continue
+        row_path = row.get("target_worktree_path")
+        if isinstance(row_path, str) and row_path == existing_str:
+            return row_ref
+    return None
+
+
+def _detect_real_conflict(
+    repo: Path,
+    *,
+    primary: Path,
+    task_ref: str,
+    target_branch: str,
+    mode: str,
+    live_tasks: Iterable[Mapping[str, Any]],
+) -> _RealConflict | None:
+    """Return the first real conflict that blocks this task-start, or None.
+
+    This is the pure replacement for the pre-WORKSTATE-REF-66
+    ``workspace_ambiguous`` veto. ``live_tasks`` enumerates the live
+    rows from the workspace summary; the helper consults git
+    (``_find_linked_worktree_for_branch``, ``git branch --list``,
+    ``Path.exists``) for resource collisions and the live-row payload
+    for policy conflicts. Order of checks (deterministic):
+
+    1. ``same_task_elsewhere`` — task already claims a different worktree.
+    2. ``mode_here_implementation_conflict`` — MODE=here against a
+       primary attached to a different implementation task.
+    3. ``branch_collision`` — target branch attached to another
+       worktree, or present as a local branch on the primary.
+    4. ``worktree_path_collision`` — sibling-of-primary derived path is
+       already attached to another task / already exists.
+    """
+    primary_str = str(primary)
+    live = [t for t in live_tasks if isinstance(t, Mapping)]
+
+    # WORKSTATE-REF-66-BR-01: probe for an existing linked worktree on the
+    # requested ``target_branch`` once up-front. When the live row for
+    # ``task_ref`` claims that same worktree path, the request is the
+    # canonical "resume in own worktree" case — neither
+    # ``same_task_elsewhere`` nor ``branch_collision`` should fire, so
+    # the caller's downstream ``_find_linked_worktree_for_branch`` reuse
+    # path can run.
+    existing_branch_worktree = _find_linked_worktree_for_branch(primary, target_branch)
+
+    for row in live:
+        row_ref = row.get("task_ref")
+        if row_ref != task_ref:
+            continue
+        row_path = row.get("target_worktree_path")
+        if not (isinstance(row_path, str) and row_path):
+            continue
+        if row_path == primary_str:
+            continue
+        if (
+            existing_branch_worktree is not None
+            and Path(row_path) == existing_branch_worktree
+        ):
+            return None
+        return _RealConflict(
+            kind="same_task_elsewhere",
+            category="policy",
+            conflicting_task_ref=task_ref,
+            conflicting_path=row_path,
+            message=(
+                f"task_ref={task_ref!r} is already live at "
+                f"worktree {row_path!r}; resume there or finish that "
+                f"task before re-starting"
+            ),
+        )
+
+    if mode == "here":
+        current = _current_branch(primary)
+        if current and current != target_branch:
+            for row in live:
+                row_path = row.get("target_worktree_path")
+                row_branch = row.get("target_branch")
+                row_ref = row.get("task_ref")
+                if (
+                    isinstance(row_path, str)
+                    and row_path == primary_str
+                    and isinstance(row_branch, str)
+                    and row_branch != "main"
+                    and row_branch != target_branch
+                    and isinstance(row_ref, str)
+                    and row_ref != task_ref
+                ):
+                    return _RealConflict(
+                        kind="mode_here_implementation_conflict",
+                        category="policy",
+                        conflicting_task_ref=row_ref,
+                        conflicting_branch=row_branch,
+                        conflicting_path=primary_str,
+                        message=(
+                            f"MODE=here would overwrite primary checkout "
+                            f"currently attached to live implementation "
+                            f"task {row_ref!r} (branch={row_branch!r}); "
+                            f"switch task or use MODE=worktree"
+                        ),
+                    )
+
+    if existing_branch_worktree is not None:
+        owner = _existing_worktree_owner(
+            live, task_ref=task_ref, existing_path=existing_branch_worktree
+        )
+        if owner is not None:
+            return _RealConflict(
+                kind="branch_collision",
+                category="collision",
+                conflicting_task_ref=owner,
+                conflicting_branch=target_branch,
+                conflicting_path=str(existing_branch_worktree),
+                message=(
+                    f"target_branch={target_branch!r} is attached to "
+                    f"worktree {str(existing_branch_worktree)!r}, owned by "
+                    f"live task {owner!r}; finish that task or choose a "
+                    f"different branch"
+                ),
+            )
+        # WORKSTATE-REF-05 implementation note: unowned existing worktree on the requested
+        # branch is recoverable — the caller can adopt it via MODE=claim
+        # instead of being told to delete a valid worktree.
+        return _RealConflict(
+            kind="claim_existing_worktree",
+            category="recoverable",
+            conflicting_branch=target_branch,
+            conflicting_path=str(existing_branch_worktree),
+            message=(
+                f"target_branch={target_branch!r} already has an unowned "
+                f"worktree at {str(existing_branch_worktree)!r}; claim it "
+                f"with MODE=claim"
+            ),
+        )
+    proc = _common.run_subprocess(
+        ["git", "-C", str(primary), "branch", "--list", target_branch]
+    )
+    if proc.returncode == 0 and (proc.stdout or "").strip():
+        return _RealConflict(
+            kind="branch_collision",
+            category="collision",
+            conflicting_branch=target_branch,
+            message=(
+                f"target_branch={target_branch!r} already exists locally; "
+                f"choose a different branch or delete the existing one"
+            ),
+        )
+
+    if mode == "worktree":
+        derived = _derive_worktree_path(primary, task_ref)
+        if derived.exists():
+            return _RealConflict(
+                kind="worktree_path_collision",
+                category="collision",
+                conflicting_path=str(derived),
+                message=(
+                    f"derived worktree path {str(derived)!r} already exists; "
+                    f"remove it or choose a different task slug"
+                ),
+            )
+
+    return None
+
+
+def _create_linked_worktree(primary: Path, target: Path, branch: str) -> bool:
+    """Run ``git worktree add -b <branch> <target>`` from ``primary``."""
+    proc = _common.run_subprocess(
+        [
+            "git",
+            "-C",
+            str(primary),
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            branch,
+            str(target),
+        ]
+    )
+    return proc.returncode == 0
+
+
+def _rollback_linked_worktree(primary: Path, target: Path, branch: str) -> None:
+    """Best-effort teardown for a worktree created earlier in this run.
+
+    Used when a downstream provisioning step (uv sync) fails so we do not
+    leave a half-provisioned worktree behind. Failure-paths are silenced
+    because a rollback that itself fails is a strictly worse outcome
+    than the already-reported sync error.
+    """
+    _common.run_subprocess(
+        ["git", "-C", str(primary), "worktree", "remove", "--force", str(target)]
+    )
+    _common.run_subprocess(["git", "-C", str(primary), "branch", "-D", branch])
+
+
+_PLAN_REVISION_SUFFIX_RE = re.compile(r"-r(\d+)\.md$")
+
+
+def _plan_revision_rank(path: Path) -> tuple[int, int, str]:
+    """Sort key: ``-rN.md`` suffix wins over un-suffixed; higher N wins."""
+    match = _PLAN_REVISION_SUFFIX_RE.search(path.name)
+    if match is not None:
+        return (1, int(match.group(1)), path.name)
+    return (0, 0, path.name)
+
+
+def _resolve_plan_glob(
+    repo: Path, plan_glob: str, plan_revision: str | None
+) -> tuple[str | None, str | None]:
+    """Resolve ``--plan`` glob to a single repo-relative plan path.
+
+    Returns ``(plan_path, error)``. ``plan_path`` is repo-relative, e.g.
+    ``docs/plans/0099-multi-plan-demo-r2.md``. ``error`` is non-None on
+    failure: ``plan_glob_no_match`` when the glob matches nothing, and
+    ``plan_revision_not_in_glob`` when an explicit pin is not among the
+    matches. When multiple files match, ``-rN.md`` suffix variants
+    outrank the un-suffixed file and higher N wins.
+    """
+    matches = sorted(repo.glob(plan_glob), key=_plan_revision_rank)
+    if not matches:
+        return None, "plan_glob_no_match"
+    if plan_revision:
+        for match in matches:
+            if match.name == plan_revision:
+                return str(match.relative_to(repo)), None
+        return None, "plan_revision_not_in_glob"
+    return str(matches[-1].relative_to(repo)), None
+
+
+def run(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="lifecycle task-start", add_help=True)
+    parser.add_argument("--task", dest="task", default="")
+    parser.add_argument("--objective", dest="objective", default="")
+    parser.add_argument("--slug", dest="slug", default=None)
+    parser.add_argument(
+        "--mode",
+        dest="mode",
+        default="worktree",
+        choices=_VALID_MODES,
+    )
+    parser.add_argument("--plan", dest="plan", default=None)
+    parser.add_argument("--plan-revision", dest="plan_revision", default=None)
+    parser.add_argument("--json", dest="emit_json", action="store_true", default=False)
+    args = parser.parse_args(argv)
+
+    task_ref = (args.task or "").strip().upper()
+    if not task_ref:
+        return _emit_error("task_ref_required")
+
+    branch = resolver.format_branch_name(task_ref, slug=args.slug)
+    if branch is None:
+        return _emit_error("task_ref_required")
+
+    repo = resolver.repo_root()
+    if repo is None:
+        return _emit_error("not_in_git_repo")
+
+    # implementation note implementation note: ``--plan <glob>`` selects from possibly multiple
+    # plan-revision files; lex-latest wins unless ``--plan-revision``
+    # pins one. Resolution runs before any git/uv mutation so a failed
+    # resolution never leaves a half-started worktree.
+    plan_glob_path: str | None = None
+    if args.plan:
+        plan_glob_path, plan_error = _resolve_plan_glob(
+            repo, args.plan, args.plan_revision
+        )
+        if plan_error is not None:
+            return _emit_error(
+                plan_error,
+                task_ref=task_ref,
+                branch=branch,
+            )
+
+    active_state = _read_active_state(repo)
+    plan_path_for_gate = plan_glob_path
+    if (
+        plan_path_for_gate is None
+        and _common.snapshot_is_live(active_state)
+        and active_state.get("task_ref") == task_ref
+    ):
+        active_plan_path = active_state.get("task_plan_path")
+        if isinstance(active_plan_path, str):
+            plan_path_for_gate = active_plan_path
+
+    if plan_path_for_gate is not None:
+        baseline = evaluate_plan_baseline(
+            repo,
+            task_ref=task_ref,
+            task_plan_path=plan_path_for_gate,
+            target_branch=_current_branch(repo) or "main",
+        )
+        baseline_receipt = baseline.to_dict()
+        if plan_glob_path is not None:
+            baseline_receipt["plan_path_source"] = "cli_plan_arg"
+            if not (_common.snapshot_is_live(active_state) and active_state.get("task_ref") == task_ref):
+                baseline_receipt["identity_state"] = "task_row_missing"
+        if baseline.baseline_status == "unknown":
+            return _emit_error(
+                baseline.reason or "plan_baseline_unknown",
+                task_ref=task_ref,
+                branch=branch,
+                events=["plan_baseline_checked"],
+                plan_path=plan_path_for_gate,
+                plan_baseline=baseline_receipt,
+            )
+        if baseline.baseline_status != "accepted":
+            if baseline.acceptance_ready or baseline.plan_untracked_on_main:
+                baseline_receipt["reason"] = "plan_baseline_missing"
+                safe_next_commands = baseline_receipt.get("safe_next_commands") or []
+                if safe_next_commands:
+                    baseline_receipt["next_command"] = safe_next_commands[0]["command"]
+                elif baseline.acceptance_ready:
+                    baseline_receipt["next_command"] = build_acceptance_next_command(task_ref)
+                error_reason = "plan_baseline_missing"
+            else:
+                error_reason = baseline.reason or "plan_baseline_not_ready"
+            return _emit_error(
+                error_reason,
+                task_ref=task_ref,
+                branch=branch,
+                events=["plan_baseline_checked"],
+                plan_path=plan_path_for_gate,
+                plan_baseline=baseline_receipt,
+            )
+
+    # WORKSTATE-REF-41 implementation note: ``uv`` preflight runs before any state mutation
+    # so an absent ``uv`` aborts cleanly without a half-created worktree.
+    preflight = uv_provisioning.uv_preflight()
+    if not preflight.ok:
+        return _emit_error(
+            f"uv_preflight_failed: {preflight.error}",
+            task_ref=task_ref,
+            branch=branch,
+        )
+
+    mode = args.mode
+    if mode == "auto":
+        # Auto resolves to worktree until a richer policy is needed.
+        mode = "worktree"
+
+    # Pre-mutation ambiguity guard (BR-WORKSTATE40-S3-01 + WORKSTATE-REF-54 implementation note
+    # rewrite for OQ2). Pinned discriminator (CTP-WORKSTATE-REF-T-01): a task is
+    # planning/maintenance iff ``target_branch == "main"``; otherwise
+    # it is implementation and subject to the worktree-singleton
+    # invariant. ``task-start`` always derives ``feature/<task-ref>``,
+    # so the *incoming* request is uniformly an implementation task.
+    pre_view = _read_workspace_summary_view(repo)
+    refusal_reason: str | None = None
+    conflict: _RealConflict | None = None
+    if pre_view.shape == "single" and isinstance(pre_view.active, dict):
+        active = pre_view.active
+        active_task_ref = active.get("task_ref")
+        if (
+            isinstance(active_task_ref, str)
+            and active_task_ref
+            and active_task_ref != task_ref
+            and _common.snapshot_is_live(active)
+            and active.get("target_branch") != "main"
+        ):
+            # OQ2 case 3: implementation active, different implementation
+            # requested → refuse (preserve worktree-singleton). OQ2 case 4
+            # (planning/maintenance active, ``target_branch == "main"``)
+            # falls through and is allowed: the new feature-branch
+            # worktree is a sibling and never displaces the on-main row.
+            refusal_reason = (
+                f"requested task_ref={task_ref!r} disagrees with active "
+                f"handoff snapshot {active_task_ref!r}"
+            )
+    elif pre_view.shape == "workspace_ambiguous":
+        # WORKSTATE-REF-66: the pre-WORKSTATE-REF-66 "uniformly refuse on unlisted" veto
+        # is replaced by claim-aware ``_detect_real_conflict`` against
+        # the workspace summary plus on-disk git state. Returning None
+        # means an explicit fresh task with unclaimed target branch +
+        # worktree path is allowed even if the workspace already lists
+        # other live siblings (the WORKSTATE-REF-66 motivating case).
+        primary = resolver.canonical_workspace_root(repo) or repo
+        conflict = _detect_real_conflict(
+            repo,
+            primary=primary,
+            task_ref=task_ref,
+            target_branch=branch,
+            mode=mode,
+            live_tasks=pre_view.tasks,
+        )
+        # WORKSTATE-REF-05 implementation note: ``claim_existing_worktree`` is recoverable, not
+        # a refusal — it is handled below by the claim recovery surface /
+        # MODE=claim binding rather than the generic ambiguity veto.
+        if conflict is not None and conflict.kind != "claim_existing_worktree":
+            refusal_reason = conflict.message
+
+    if refusal_reason is not None:
+        decision_id = f"claude_workflow_ambiguity_resolved_task_start_{task_ref.replace('-', '_').lower()}_{_utc_stamp()}"
+        if conflict is not None:
+            rationale = (
+                f"task-start refused: {refusal_reason}; "
+                f"conflict.kind={conflict.kind} "
+                f"conflict.category={conflict.category}"
+            )
+            if conflict.conflicting_task_ref is not None:
+                rationale += f" conflicting_task_ref={conflict.conflicting_task_ref!r}"
+            if conflict.conflicting_branch is not None:
+                rationale += f" conflicting_branch={conflict.conflicting_branch!r}"
+            if conflict.conflicting_path is not None:
+                rationale += f" conflicting_path={conflict.conflicting_path!r}"
+            rationale += "; no git mutation performed"
+        else:
+            rationale = (
+                f"task-start refused: {refusal_reason}; no git mutation performed"
+            )
+        projection.project_decision(
+            repo,
+            decision_id=decision_id,
+            rationale=rationale,
+            session=decision_id,
+        )
+        return _emit_error(
+            "task_ref_ambiguous",
+            task_ref=task_ref,
+            branch=branch,
+            events=["ambiguity_resolved"],
+            conflict_kind=conflict.kind if conflict is not None else None,
+            conflict_category=conflict.category if conflict is not None else None,
+        )
+
+    # WORKSTATE-REF-05 implementation note: claim recovery surface. A claimable (unowned)
+    # existing worktree for the requested branch is recoverable, not a
+    # refusal — MODE=worktree/here returns a zero-mutation receipt naming
+    # the supported MODE=claim follow-up; MODE=claim falls through to the
+    # binding dispatch below.
+    if (
+        conflict is not None
+        and conflict.kind == "claim_existing_worktree"
+        and mode != "claim"
+    ):
+        claim_command = f"make task-start TASK={task_ref} MODE=claim"
+        if args.plan:
+            claim_command += f" PLAN={args.plan}"
+        existing_path = conflict.conflicting_path or ""
+        claim_head = (
+            resolver.head_sha(Path(existing_path)) or "" if existing_path else ""
+        )
+        return _emit_error(
+            "claimable_worktree_exists",
+            task_ref=task_ref,
+            branch=branch,
+            events=["claim_recovery_offered"],
+            handoff_projection="pending",
+            conflict_kind=conflict.kind,
+            conflict_category=conflict.category,
+            recovery_kind="claim_existing_worktree",
+            worktree_path=existing_path,
+            head=claim_head,
+            safe_next_commands=[
+                {
+                    "command": claim_command,
+                    "reason": "claimable_worktree_exists",
+                }
+            ],
+        )
+
+    created_branch = True
+    reused_worktree = False
+    previous_branch = ""
+    if mode == "here":
+        previous_branch = _current_branch(repo)
+        if not _checkout_branch_here(repo, branch):
+            return _emit_error("branch_checkout_failed")
+        worktree_path = repo
+        head = resolver.head_sha(repo) or ""
+    elif mode == "worktree":
+        primary = resolver.canonical_workspace_root(repo) or repo
+        existing = _find_linked_worktree_for_branch(primary, branch)
+        if existing is not None:
+            worktree_path = existing
+            created_branch = False
+            reused_worktree = True
+        else:
+            worktree_path = _derive_worktree_path(primary, task_ref)
+            if not _create_linked_worktree(primary, worktree_path, branch):
+                return _emit_error("worktree_create_failed")
+        head = resolver.head_sha(worktree_path) or ""
+    elif mode == "claim":
+        # WORKSTATE-REF-05 implementation note: bind a pre-existing unowned worktree for the
+        # requested branch to the task row through the normal projection
+        # path. No branch/worktree creation — the worktree is adopted
+        # as-is. Owned-by-other is re-checked here so MODE=claim is safe
+        # even outside the workspace_ambiguous shape that pre-filters it.
+        primary = resolver.canonical_workspace_root(repo) or repo
+        existing = _find_linked_worktree_for_branch(primary, branch)
+        if existing is None:
+            return _emit_error(
+                "claim_no_existing_worktree",
+                task_ref=task_ref,
+                branch=branch,
+            )
+        owner = _existing_worktree_owner(
+            [t for t in pre_view.tasks if isinstance(t, Mapping)],
+            task_ref=task_ref,
+            existing_path=existing,
+        )
+        if owner is not None:
+            return _emit_error(
+                "task_ref_ambiguous",
+                task_ref=task_ref,
+                branch=branch,
+                events=["ambiguity_resolved"],
+                conflict_kind="branch_collision",
+                conflict_category="collision",
+            )
+        worktree_path = existing
+        created_branch = False
+        reused_worktree = True
+        head = resolver.head_sha(worktree_path) or ""
+    else:
+        return _emit_error(f"mode_not_implemented:{mode}")
+
+    # WORKSTATE-REF-41 implementation note: ``uv sync --extra dev`` per package after worktree
+    # creation. Output is streamed to stderr so the operator sees the
+    # provisioning step. Sync failure aborts and rolls back the linked
+    # worktree (when we created it ourselves) so the state row is never
+    # written.
+    sync_root = worktree_path if worktree_path.is_dir() else repo
+    sync_ok, sync_results = uv_provisioning.uv_sync_packages(
+        sync_root,
+        override=uv_provisioning.sync_packages_override(),
+        stream=sys.stderr,
+    )
+    if not sync_ok:
+        failing = next((r for r in sync_results if not r.ok), None)
+        if mode == "worktree" and created_branch and not reused_worktree:
+            primary = resolver.canonical_workspace_root(repo) or repo
+            _rollback_linked_worktree(primary, worktree_path, branch)
+        elif mode == "here" and created_branch:
+            # BR-WORKSTATE41-r6-02: without this, a sync failure left the
+            # caller checked out on the new feature branch with no
+            # handoff projection — the same half-started state implementation note
+            # avoids for MODE=worktree.
+            _rollback_branch_here(repo, previous_branch, branch)
+        if failing is not None:
+            reason = f"uv_sync_failed: uv sync failed in packages/{failing.package}; rerun manually before continuing"
+        else:
+            reason = "uv_sync_failed"
+        return _emit_error(reason, task_ref=task_ref, branch=branch)
+
+    # WORKSTATE-REF-07 implementation note: provision the worktree-root ``.venv`` after package
+    # sync and before any handoff projection, so a bare ``pytest`` from the
+    # worktree root resolves locally instead of via the pyenv shim. venv
+    # creation / ``pytest`` install failure is a HARD failure that rolls
+    # back the just-created worktree/branch using the identical cleanup
+    # semantics as the sync-failure path above; per-package editable-install
+    # conflicts are best-effort and never abort here.
+    root_venv = uv_provisioning.provision_root_venv(
+        sync_root,
+        override=uv_provisioning.sync_packages_override(),
+        stream=sys.stderr,
+    )
+    if not root_venv.ok:
+        if mode == "worktree" and created_branch and not reused_worktree:
+            primary = resolver.canonical_workspace_root(repo) or repo
+            _rollback_linked_worktree(primary, worktree_path, branch)
+        elif mode == "here" and created_branch:
+            _rollback_branch_here(repo, previous_branch, branch)
+        return _emit_error(
+            f"root_venv_provisioning_failed: {root_venv.failure_reason}",
+            task_ref=task_ref,
+            branch=branch,
+        )
+
+    plan_path = (
+        active_state.get("task_plan_path")
+        if _common.snapshot_is_live(active_state)
+        else None
+    )
+    if not isinstance(plan_path, str):
+        plan_path = None
+    # implementation note: an explicit ``--plan`` glob always wins over the live
+    # snapshot's task_plan_path so callers can re-anchor a task to a
+    # specific plan revision without first mutating handoff state.
+    if plan_glob_path is not None:
+        plan_path = plan_glob_path
+
+    status = projection.project_state_sync(
+        repo,
+        task_ref=task_ref,
+        target_branch=branch,
+        target_worktree_path=str(worktree_path),
+        task_plan_path=plan_path,
+    )
+
+    is_claim = mode == "claim"
+    receipt = {
+        "ok": True,
+        "command": "task-start",
+        "task_ref": task_ref,
+        "branch": branch,
+        "worktree_path": str(worktree_path),
+        "head": head,
+        "handoff_projection": status,
+        "events": ["claimed_existing_worktree"] if is_claim else ["task_started"],
+        "mode": mode,
+        "created_branch": created_branch,
+        "reused_worktree": reused_worktree,
+        "plan_path": plan_path,
+        "recovery_kind": "claim_existing_worktree" if is_claim else None,
+        "conflict_kind": None,
+        "conflict_category": None,
+        # WORKSTATE-REF-07 implementation note: additive — names the provisioned worktree-root
+        # ``.venv`` when one was created (None when no packages required it).
+        "root_venv_path": str(root_venv.venv_dir) if root_venv.created else None,
+    }
+
+    if not args.emit_json:
+        sys.stderr.write(
+            f"task-start: task_ref={task_ref} branch={branch} mode={mode} head={head[:12]} projection={status}\n"
+        )
+
+    _common.emit(receipt)
+    return 0

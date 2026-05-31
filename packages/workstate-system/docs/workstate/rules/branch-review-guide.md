@@ -1,0 +1,1 @@
+../../../../mcp-workstate-orchestrator/src/workstate_orchestrator_mcp/_assets/rules/branch-review-guide.md

@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "workstate-system"
+version = "0.1.2"
+description = "Canonical workstate-system overlay payload (skills, hooks, contracts, generator) shipped as package data for workstate-bootstrap."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "darce" }]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/darce/workstate"
+Source = "https://github.com/darce/workstate/tree/main/packages/workstate-system"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+# The overlay payload lives at the package root (skills/, scripts/, config/,
+# docs/, Makefile.d/, .github/hooks/) rather than under workstate_system/.
+# Force-include maps each consumer-facing surface under the importable
+# workstate_system/ namespace so the installed distribution exposes the same
+# tree workstate-bootstrap materializes.
+#
+# NOTE: hatchling's `exclude` does NOT filter force-included paths, so the
+# privacy filter is applied by force-including only the non-internal children
+# of the surfaces that also contain internal material (scripts/workstate and
+# Makefile.d both carry evals; docs/workstate carries internal adrs). implementation note's
+# byte-identical package-vs-git-overlay parity test is the comprehensive guard
+# that no needed surface is omitted. A build-hook-based central filter
+# (reproducing scripts/export_public.py) is a hardening follow-up.
+[tool.hatch.build.targets.wheel]
+only-include = ["workstate_system"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "workstate_system/skills"
+"scripts/hooks" = "workstate_system/scripts/hooks"
+"scripts/generate_agent_workflows.py" = "workstate_system/scripts/generate_agent_workflows.py"
+"scripts/workstate/lifecycle" = "workstate_system/scripts/workstate/lifecycle"
+"scripts/workstate/git-plan-cat.sh" = "workstate_system/scripts/workstate/git-plan-cat.sh"
+"config/agent-workflows" = "workstate_system/config/agent-workflows"
+"docs/workstate/contracts" = "workstate_system/docs/workstate/contracts"
+"docs/workstate/rules" = "workstate_system/docs/workstate/rules"
+"docs/workstate/templates" = "workstate_system/docs/workstate/templates"
+"docs/workstate/maps" = "workstate_system/docs/workstate/maps"
+"Makefile.d/compaction.mk" = "workstate_system/Makefile.d/compaction.mk"
+"Makefile.d/lifecycle.mk" = "workstate_system/Makefile.d/lifecycle.mk"
+"Makefile.d/plans.mk" = "workstate_system/Makefile.d/plans.mk"
+"Makefile.d/plugins.mk" = "workstate_system/Makefile.d/plugins.mk"
+"Makefile.d/workflows.mk" = "workstate_system/Makefile.d/workflows.mk"
+".github/hooks" = "workstate_system/.github/hooks"
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "**/evals/**",
+  "**/evals.mk",
+  "tests/",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

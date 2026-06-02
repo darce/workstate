@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "command": "status",
+  "task_ref": null,
+  "branch": "main",
+  "worktree_path": "/example/repo",
+  "head": "0000000000000000000000000000000000000000",
+  "handoff_projection": "pending",
+  "repo_root": "/example/repo",
+  "cwd": "/example/repo",
+  "cwd_matches_target": true,
+  "target_worktree_path": "/example/repo",
+  "target_branch": "main",
+  "merge_base_available": true,
+  "dirty_summary": {
+    "staged": 0,
+    "unstaged": 0,
+    "untracked": 0,
+    "total": 0
+  },
+  "daemon_status": {
+    "enabled": false,
+    "source": "harness-protocol"
+  },
+  "workflow_file": {
+    "present": false,
+    "path": null
+  },
+  "handoff_available": false,
+  "handoff": null,
+  "plan": {
+    "path": null,
+    "exists": false,
+    "title": null,
+    "task_ref_matches_branch": null,
+    "stale_reason": "branch_has_no_task_ref",
+    "read_branch": null,
+    "read_command": null,
+    "read_receipt": null
+  },
+  "review": {
+    "open_findings_count": null,
+    "blockers_count": null,
+    "last_test_summary": null,
+    "ready_state": "pending_handoff"
+  },
+  "warnings": [
+    {
+      "field": "handoff",
+      "reason": "unavailable",
+      "exception_type": null
+    }
+  ],
+  "next_command": {
+    "command": "make task-start TASK=<ref>",
+    "reason": "main_branch_requires_task_start"
+  },
+  "workspace_role": "control_plane",
+  "canonical_worktree_path": null,
+  "plan_baseline": null
+}

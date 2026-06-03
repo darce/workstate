@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "workstate-system"
+version = "0.1.3"
+description = "Canonical workstate-system overlay payload (skills, hooks, contracts, generator) shipped as package data for workstate-bootstrap."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "darce" }]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/darce/workstate"
+Source = "https://github.com/darce/workstate/tree/main/packages/workstate-system"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+# implementation note S3: the overlay payload is co-located under
+# `workstate_system/payload/` and ships by "ship the package" — `only-include`
+# delivers the importable package (with its payload subtree) and there is no
+# force-include map. Internal-only material (evals, adrs, generated, tests)
+# lives OUTSIDE `workstate_system/`, so it is structurally impossible to sweep
+# into the wheel; `tests/test_payload_colocation.py` (the negative privacy
+# guard + the wheel-vs-source byte-parity test) is the comprehensive guard that
+# no internal file leaks and no needed surface is dropped.
+[tool.hatch.build.targets.wheel]
+only-include = ["workstate_system"]
+exclude = ["**/__pycache__", "**/*.pyc"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  "**/evals/**",
+  "**/evals.mk",
+  "tests/",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

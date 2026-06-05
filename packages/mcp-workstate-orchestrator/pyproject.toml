@@ -1,0 +1,179 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-workstate-orchestrator"
+version = "0.6.0"
+description = "MCP server for orchestration, lane management, worker daemons, and turn metrics."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp",
+    "mcp-workstate-handoff>=0.12.3,<0.13.0",
+    "workstate-protocol>=0.2.1,<0.3.0",
+]
+
+[project.scripts]
+mcp-workstate-orchestrator = "workstate_orchestrator_mcp.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/darce/workstate"
+Source = "https://github.com/darce/workstate/tree/main/packages/mcp-workstate-orchestrator"
+Changelog = "https://github.com/darce/workstate/blob/main/packages/mcp-workstate-orchestrator/CHANGELOG.md"
+Issues = "https://github.com/darce/workstate/issues"
+
+[project.optional-dependencies]
+# Optional host bridge for the `codex-subagent` backend. It is intentionally NOT
+# a base dependency: the bridge is host-specific and unpublished, so a default
+# install (and the bootstrap `uv run --no-sync` launcher's presync) stays cheap
+# and bridge-free. Install on demand with `mcp-workstate-orchestrator[bridge]`
+# (locally resolved from the sibling source via [tool.uv.sources] below). When the
+# bridge is absent, `list_available_backends(probe=true)` reports the
+# `codex-subagent` backend as `availability_state="declared_not_installed"` rather
+# than silently claiming it is available.
+bridge = [
+    "workstate-codex-bridge>=0.1.0,<0.2.0",
+]
+test = [
+    "hypothesis>=6.0.0",
+    "pytest>=8.0.0",
+]
+dev = [
+    "hypothesis>=6.0.0",
+    "pytest>=8.0.0",
+    "ruff>=0.11.0,<1.0.0",
+    "mypy>=1.13.0,<2.0.0",
+]
+
+[tool.uv.sources]
+# Dev-only monorepo override for local iteration (mirrors mcp-workstate-handoff):
+# resolve workstate-protocol from the sibling source so cross-package constants
+# (e.g. workstate_protocol.paths) are available before the next protocol wheel
+# publishes. Wheel metadata still comes from [project.dependencies] above.
+workstate-protocol = { path = "../workstate-protocol", editable = true }
+# Local source for the optional `bridge` extra (unpublished, host-specific). Only
+# resolved when the `bridge` extra is requested (`uv sync --extra bridge`); the
+# default sync never pulls it.
+workstate-codex-bridge = { path = "../workstate-codex-bridge", editable = true }
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+py-modules = ["workstate_orchestrator_mcp_launcher"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"workstate_orchestrator_mcp._assets" = [
+    "scripts/*",
+    "rules/*.md",
+    "templates/*.md",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [
+    "build",
+    "src/*.egg-info",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+]
+ignore = [
+    "WORKSTATE-REF-501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"src/workstate_orchestrator_mcp/api.py" = ["F401"]
+"src/workstate_orchestrator_mcp/orchestration/*.py" = ["WORKSTATE-REF-402"]
+"tests/**/*.py" = ["WORKSTATE-REF-402", "F401", "F811"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+exclude = ["build/"]
+warn_return_any = true
+warn_unused_configs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+no_implicit_optional = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = [
+    "fastmcp",
+    "fastmcp.*",
+    "textual",
+    "textual.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "_env",
+    "backend_adapter",
+    "backend_registry",
+    "bootstrap_lane",
+    "dashboard_live",
+    "lane_exec",
+    "lane_manifest",
+    "orchestrator_guidance",
+    "orchestrator_guidance_policy",
+    "orchestrator_helpers",
+    "orchestrator_lanes",
+    "review_runner",
+    "task_plan_parser",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "workstate_orchestrator_mcp.api",
+    "workstate_orchestrator_mcp.orchestration.ace_metrics",
+    "workstate_orchestrator_mcp.orchestration.adapters.codex_cli",
+    "workstate_orchestrator_mcp.orchestration.backend_registry",
+    "workstate_orchestrator_mcp.orchestration.bootstrap_lane",
+    "workstate_orchestrator_mcp.orchestration.lane_exec",
+    "workstate_orchestrator_mcp.orchestration.lane_prompt",
+    "workstate_orchestrator_mcp.orchestration.lane_result",
+    "workstate_orchestrator_mcp.orchestration.orchestrator_daemon",
+    "workstate_orchestrator_mcp.orchestration.orchestrator_guidance",
+    "workstate_orchestrator_mcp.orchestration.review_runner",
+    "workstate_orchestrator_mcp.orchestration.worker_daemon",
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disable_error_code = ["method-assign", "arg-type"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    ".pytest_cache",
+    "build",
+    "src/*.egg-info",
+]
+
+[tool.hoisted]
+repository = "darce/workstate"
+install_url = "git+https://github.com/darce/workstate.git@mcp-workstate-orchestrator-v{version}#subdirectory=packages/mcp-workstate-orchestrator"
+changelog = "CHANGELOG.md"

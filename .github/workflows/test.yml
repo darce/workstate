@@ -1,0 +1,49 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  public-build-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Validate release manifest
+        run: python scripts/release_manifest.py validate
+
+      - name: Build public distributions
+        run: |
+          mkdir -p dist/all
+          python scripts/release_manifest.py list --release-only --field name > /tmp/workstate-packages.txt
+          while IFS= read -r package; do
+            python -m build --outdir dist/all "packages/${package}"
+          done < /tmp/workstate-packages.txt
+          python -m twine check dist/all/*
+
+      - name: Install built distributions
+        run: |
+          python -m pip install --find-links dist/all workstate-protocol mcp-workstate-handoff mcp-workstate-orchestrator workstate-bootstrap workstate-codex-bridge
+
+      - name: Import smoke
+        run: |
+          python - <<'PY'
+          import workstate_bootstrap
+          import workstate_codex_bridge
+          import workstate_handoff_mcp
+          import workstate_orchestrator_mcp
+          import workstate_protocol
+
+          print("public import smoke passed")
+          PY

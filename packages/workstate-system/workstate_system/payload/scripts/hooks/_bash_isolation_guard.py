@@ -491,7 +491,7 @@ def scan_bash_command(
         root_abs = repo_root
 
     candidate_paths: list[str] = []
-    formatter_detected = False
+    formatter_cwds: list[Path | None] = []
 
     # implementation note: thread an effective cwd through the stage loop. A `cd` stage
     # updates it only when the following stage is joined by `&&`/`;`
@@ -519,8 +519,8 @@ def scan_bash_command(
             candidate_paths.extend(
                 _absolutize_target(t, git_base, root_abs) for t in git_targets
             )
-            if not formatter_detected and _detect_formatter(verb, args):
-                formatter_detected = True
+            if _detect_formatter(verb, args):
+                formatter_cwds.append(effective_cwd)
         stage_targets.extend(_scan_python_inline(stage))
         candidate_paths.extend(
             _absolutize_target(t, effective_cwd, root_abs) for t in stage_targets
@@ -553,7 +553,21 @@ def scan_bash_command(
     # the contract. Emit the configured roots directly (with a `<root> (formatter)`
     # label) so the caller surfaces a clear, contract-backed violation without
     # fabricating file paths.
-    if formatter_detected:
+    # REVGUARD-F1: resolve each formatter stage's effective cwd to its
+    # worktree branch (parity with the per-path resolve_path_branch rule for
+    # explicit targets). A formatter whose cwd is a feature-branch worktree
+    # is not a main-branch write. Unknown cwd (unresolvable / non-propagating
+    # cd) or a cwd outside any git worktree stays fail-closed.
+    formatter_on_protected = False
+    for fmt_cwd in formatter_cwds:
+        if fmt_cwd is None:
+            formatter_on_protected = True
+            break
+        fmt_branch = resolve_path_branch(str(fmt_cwd))
+        if fmt_branch is None or fmt_branch in protected_branches:
+            formatter_on_protected = True
+            break
+    if formatter_on_protected:
         for root in policy.code_roots:
             normalized = root.strip("/")
             if not normalized:

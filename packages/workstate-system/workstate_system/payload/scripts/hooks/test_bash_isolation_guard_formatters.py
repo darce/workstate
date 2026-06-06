@@ -1,11 +1,16 @@
 """Regression tests for FU-01 formatter detection in _bash_isolation_guard.
 
-Contract: when the Bash command matches a known in-place formatter pattern,
-`scan_bash_command` reports every configured `code_roots` entry (and
-`root_protected_files`) as blocked with a `<root>/ (formatter)` label, so the
-caller (guard-bash-main-branch.py) surfaces the contract-backed violation.
-Unrelated commands (read-only linters, `make test-*`, plain `ruff check`)
-must NOT trigger the formatter branch.
+Contract: when the Bash command matches a known in-place formatter pattern
+AND the formatter's write locations (stage cwd, ``make -C`` redirect target,
+explicit path args) resolve to a protected branch — or cannot be resolved at
+all (fail-closed) — `scan_bash_command` reports every configured
+`code_roots` entry (and `root_protected_files`) as blocked with a
+`<root>/ (formatter)` label, so the caller (guard-bash-main-branch.py)
+surfaces the contract-backed violation. A formatter whose every write
+location resolves to a feature-branch worktree does not block (REVGUARD-F1).
+Read-only invocations (`--check`/`--diff`/`--dry-run` without a fix flag) and
+unrelated commands (read-only linters, `make test-*`, plain `ruff check`)
+must NOT trigger the formatter branch (REVGUARD-F2).
 """
 
 from __future__ import annotations
@@ -321,10 +326,15 @@ def test_readonly_and_write_flag_combo_stays_blocked(main_repo: Path) -> None:
 # feature-branch worktree.
 
 
+def _assert_formatter_labels(blocked: list[str], context: str) -> None:
+    labels = [b for b in blocked if b.endswith("(formatter)")]
+    assert labels, f"{context}: expected formatter-labelled block, got {blocked!r}"
+
+
 def test_formatter_absolute_path_arg_into_main_blocked(fmt_repo_pair) -> None:
     primary, wt = fmt_repo_pair
     blocked = scan_bash_command(f"cd {wt} && ruff format {primary}/packages/", primary, _policy())
-    assert blocked, "absolute formatter path arg into main checkout must block"
+    _assert_formatter_labels(blocked, "absolute formatter path arg into main checkout")
 
 
 def test_formatter_relative_escape_path_arg_into_main_blocked(fmt_repo_pair) -> None:
@@ -332,7 +342,27 @@ def test_formatter_relative_escape_path_arg_into_main_blocked(fmt_repo_pair) -> 
     blocked = scan_bash_command(
         "cd " + str(wt) + " && black ../primary/packages/pkg/mod.py", primary, _policy()
     )
-    assert blocked, "relative-escape formatter path arg into main checkout must block"
+    _assert_formatter_labels(blocked, "relative-escape formatter path arg into main checkout")
+
+
+def test_prettier_path_arg_into_main_blocked(fmt_repo_pair) -> None:
+    primary, wt = fmt_repo_pair
+    blocked = scan_bash_command(f"cd {wt} && prettier --write {primary}/apps/", primary, _policy())
+    _assert_formatter_labels(blocked, "prettier path arg into main checkout")
+
+
+def test_eslint_fix_path_arg_into_main_blocked(fmt_repo_pair) -> None:
+    primary, wt = fmt_repo_pair
+    blocked = scan_bash_command(f"cd {wt} && eslint --fix {primary}/apps/", primary, _policy())
+    _assert_formatter_labels(blocked, "eslint --fix path arg into main checkout")
+
+
+def test_stylelint_fix_path_arg_into_main_blocked(fmt_repo_pair) -> None:
+    primary, wt = fmt_repo_pair
+    blocked = scan_bash_command(
+        f"cd {wt} && stylelint --fix {primary}/apps/styles.css", primary, _policy()
+    )
+    _assert_formatter_labels(blocked, "stylelint --fix path arg into main checkout")
 
 
 def test_formatter_relative_path_arg_inside_feature_worktree_allowed(fmt_repo_pair) -> None:
@@ -367,5 +397,19 @@ def test_make_directory_flag_into_main_checkout_blocked(fmt_repo_pair) -> None:
     primary, wt = fmt_repo_pair
     blocked = scan_bash_command(
         f"cd {wt} && make --directory={primary} format-all", primary, _policy()
+    )
+    assert any(b.endswith("(formatter)") for b in blocked)
+
+
+def test_make_glued_dash_c_into_main_checkout_blocked(fmt_repo_pair) -> None:
+    primary, wt = fmt_repo_pair
+    blocked = scan_bash_command(f"cd {wt} && make -C{primary} format-all", primary, _policy())
+    assert any(b.endswith("(formatter)") for b in blocked)
+
+
+def test_make_directory_space_form_into_main_checkout_blocked(fmt_repo_pair) -> None:
+    primary, wt = fmt_repo_pair
+    blocked = scan_bash_command(
+        f"cd {wt} && make --directory {primary} format-all", primary, _policy()
     )
     assert any(b.endswith("(formatter)") for b in blocked)

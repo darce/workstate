@@ -135,9 +135,9 @@ def _path_should_be_scanned(rel_path: str) -> bool:
 
 def _glob_match(name: str, pattern: str) -> bool:
     # Tiny shim so we don't pull in fnmatch for one call.
-    from fnmatch import fnmatWORKSTATEase
+    from fnmatch import fnmatchcase
 
-    return fnmatWORKSTATEase(name, pattern)
+    return fnmatchcase(name, pattern)
 
 
 def _detect_finding_runs(text: str) -> list[tuple[int, list[str]]]:

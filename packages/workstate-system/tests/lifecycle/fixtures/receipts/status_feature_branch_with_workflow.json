@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "command": "status",
+  "task_ref": "WORKSTATE-REF-77",
+  "branch": "feature/WORKSTATE-77-x",
+  "worktree_path": "/example/repo",
+  "head": "0000000000000000000000000000000000000000",
+  "handoff_projection": "pending",
+  "repo_root": "/example/repo",
+  "cwd": "/example/repo",
+  "cwd_matches_target": true,
+  "target_worktree_path": "/example/repo",
+  "target_branch": "feature/WORKSTATE-77-x",
+  "merge_base_available": true,
+  "dirty_summary": {
+    "staged": 0,
+    "unstaged": 0,
+    "untracked": 1,
+    "total": 1
+  },
+  "daemon_status": {
+    "enabled": false,
+    "source": "harness-protocol"
+  },
+  "workflow_file": {
+    "present": true,
+    "path": "/example/repo/WORKFLOW.md"
+  },
+  "handoff_available": false,
+  "handoff": null,
+  "plan": {
+    "path": null,
+    "exists": false,
+    "title": null,
+    "task_ref_matches_branch": null,
+    "stale_reason": "missing_from_worktree",
+    "read_branch": null,
+    "read_command": null,
+    "read_receipt": null
+  },
+  "review": {
+    "open_findings_count": null,
+    "blockers_count": null,
+    "last_test_summary": null,
+    "ready_state": "pending_handoff"
+  },
+  "warnings": [
+    {
+      "field": "handoff",
+      "reason": "unavailable",
+      "exception_type": null
+    }
+  ],
+  "next_command": {
+    "command": "make slice-start TASK=WORKSTATE-REF-77",
+    "reason": "working_tree_dirty"
+  },
+  "workspace_role": "implementation_plane",
+  "canonical_worktree_path": null,
+  "plan_baseline": null
+}

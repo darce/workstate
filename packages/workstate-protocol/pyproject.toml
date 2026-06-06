@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "workstate-protocol"
+version = "0.2.2"
+description = "Typed cross-repo contracts for the Workstate system: handoff state, MCP I/O, hook events, skill manifests, bootstrap install manifest."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/darce/workstate"
+Source = "https://github.com/darce/workstate/tree/main/packages/workstate-protocol"
+Changelog = "https://github.com/darce/workstate/blob/main/packages/workstate-protocol/CHANGELOG.md"
+Issues = "https://github.com/darce/workstate/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+workstate_protocol = ["py.typed"]

@@ -160,3 +160,34 @@ def test_chained_commands_trigger_on_formatter_stage() -> None:
 
 def test_chained_commands_no_trigger_when_no_formatter() -> None:
     _assert_not_formatter("git status && ruff check packages/")
+
+
+# --- read-only invocations of formatter verbs (REVGUARD-F2) ----------------
+# `--check` / `--diff` / `--dry-run` runs verify formatting without writing;
+# they must not trip the in-place-formatter branch.
+
+
+def test_ruff_format_check_not_formatter() -> None:
+    _assert_not_formatter("ruff format --check packages/")
+
+
+def test_ruff_format_diff_not_formatter() -> None:
+    _assert_not_formatter("ruff format --diff packages/")
+
+
+def test_black_check_not_formatter() -> None:
+    _assert_not_formatter("black --check packages/")
+
+
+def test_prettier_check_not_formatter() -> None:
+    _assert_not_formatter("prettier --check apps/")
+
+
+def test_make_dry_run_format_all_not_formatter() -> None:
+    _assert_not_formatter("make --dry-run format-all")
+
+
+def test_readonly_flag_with_explicit_fix_flag_stays_blocked() -> None:
+    # Conservative bias: a write flag alongside a read-only flag still counts
+    # as a formatter run; prefer false-positive over silent drift.
+    _assert_formatter_blocked("ruff check --fix --diff packages/")

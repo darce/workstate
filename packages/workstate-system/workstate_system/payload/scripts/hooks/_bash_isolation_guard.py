@@ -102,11 +102,23 @@ _FORMATTER_FIX_FLAG_RULES: tuple[tuple[str, frozenset[str]], ...] = (
     ("stylelint", frozenset({"--fix"})),
 )
 
+# Read-only invocations of formatter verbs (`ruff format --check`,
+# `black --diff`, `make --dry-run format-all`) verify without writing. An
+# explicit fix flag alongside a read-only flag still counts as a formatter
+# run — conservative bias, prefer false-positive over silent drift.
+_READONLY_FORMATTER_FLAGS = frozenset({"--check", "--diff", "--dry-run"})
+
 
 def _detect_formatter(verb: str, args: list[str]) -> bool:
     """Return True when the verb+args look like an in-place formatter run."""
     if not verb:
         return False
+    if any(token in _READONLY_FORMATTER_FLAGS for token in args):
+        fix_flags = frozenset().union(
+            *(flags for rule_verb, flags in _FORMATTER_FIX_FLAG_RULES if rule_verb == verb)
+        )
+        if not any(token in fix_flags for token in args):
+            return False
     for rule_verb, subcommands in _FORMATTER_SUBCOMMAND_RULES:
         if verb != rule_verb:
             continue

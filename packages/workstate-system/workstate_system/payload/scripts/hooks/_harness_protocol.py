@@ -329,9 +329,9 @@ def is_branch_isolation_protected_path(rel_path: str, policy: BranchIsolationPol
 
 
 def _matches_surface_pattern(candidate: PurePosixPath, normalized: str, pattern: str) -> bool:
-    if fnmatch.fnmatWORKSTATEase(normalized, pattern):
+    if fnmatch.fnmatchcase(normalized, pattern):
         return True
-    if "/**/" in pattern and fnmatch.fnmatWORKSTATEase(normalized, pattern.replace("/**/", "/")):
+    if "/**/" in pattern and fnmatch.fnmatchcase(normalized, pattern.replace("/**/", "/")):
         return True
     if pattern.endswith("/**"):
         prefix = pattern[:-3].rstrip("/")

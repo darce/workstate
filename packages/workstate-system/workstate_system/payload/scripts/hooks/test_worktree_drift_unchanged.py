@@ -176,3 +176,24 @@ def test_worktree_drift_module_source_preserves_file_mutation_surface() -> None:
         "_worktree_drift.py must still emit `outcome=\"block\"` decisions for "
         "wrong-worktree edits — this is the load-bearing Cold-Start contract."
     )
+
+
+def test_bash_formatter_in_feature_worktree_still_feeds_drift_check(tmp_path: Path) -> None:
+    """REVGUARD cycle-1 B-01: the FU-02 Bash path must keep seeing formatter
+    invocations after the FU-01 block became branch-aware. A formatter whose
+    stage cwd is a feature-branch worktree no longer emits `(formatter)`
+    labels from ``scan_bash_command``, so ``_extract_bash_candidate_paths``
+    must derive the formatter's hosting worktree independently and surface it
+    for the drift comparison.
+    """
+    from _worktree_drift import _extract_bash_candidate_paths
+
+    primary, feature_root = _make_two_worktrees(tmp_path)
+    paths = _extract_bash_candidate_paths(
+        {"command": f"cd {feature_root} && make format-all"},
+        workspace_root=primary,
+    )
+    resolved = {str(Path(p).resolve(strict=False)) for p in paths}
+    assert str(feature_root.resolve()) in resolved, (
+        f"formatter stage cwd must surface for drift comparison; got {paths!r}"
+    )

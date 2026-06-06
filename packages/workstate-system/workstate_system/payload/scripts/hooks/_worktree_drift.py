@@ -123,7 +123,11 @@ def _extract_bash_candidate_paths(
     if not isinstance(command, str) or not command.strip():
         return []
     try:
-        from _bash_isolation_guard import extract_raw_write_targets, scan_bash_command
+        from _bash_isolation_guard import (
+            extract_raw_write_targets,
+            formatter_stage_cwds,
+            scan_bash_command,
+        )
         from _harness_protocol import HarnessContractMissingError, load_branch_isolation_policy
     except ImportError:
         return []
@@ -134,10 +138,11 @@ def _extract_bash_candidate_paths(
         return []
     blocked = scan_bash_command(command, workspace, policy)
     paths: list[str] = []
-    formatter_detected = False
     for entry in blocked:
         if entry.endswith("(formatter)"):
-            formatter_detected = True
+            # Formatter placement is derived from formatter_stage_cwds below;
+            # the branch-aware FU-01 labels are not a reliable formatter
+            # signal anymore (REVGUARD B-01).
             continue
         paths.append(entry)
 
@@ -175,11 +180,17 @@ def _extract_bash_candidate_paths(
         seen.add(token)
         paths.append(token)
 
-    if formatter_detected:
-        # Formatter invocations implicitly write across the cwd's worktree; use
-        # the resolved workspace root so _candidate_worktree_root reports the
-        # hosting worktree for the drift comparison.
-        paths.append(str(workspace))
+    # Formatter invocations implicitly write across their stage's effective
+    # worktree (cwd or `make -C` target). Surface each formatter's hosting
+    # directory — falling back to the workspace root when the stage cwd is
+    # unknown — so _candidate_worktree_root reports the hosting worktree for
+    # the drift comparison (REVGUARD B-01: works for feature-branch cwds the
+    # branch-aware FU-01 block no longer labels).
+    for fmt_cwd in formatter_stage_cwds(command, workspace):
+        token = str(fmt_cwd) if fmt_cwd is not None else str(workspace)
+        if token not in seen:
+            seen.add(token)
+            paths.append(token)
     return paths
 
 

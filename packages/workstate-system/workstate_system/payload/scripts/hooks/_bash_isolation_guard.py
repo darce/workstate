@@ -126,9 +126,18 @@ def _detect_formatter(verb: str, args: list[str]) -> bool:
             # verb alone is sufficient (e.g. `black`, `prettier --write`).
             return True
         # npm/yarn/pnpm often require a literal "run" token before the script.
+        # Value-taking flags (`make -C <dir>`, `make -f <file>`) must not have
+        # their VALUE mistaken for the subcommand positional (REVGUARD A-02).
         candidate_tokens = []
+        skip_next = False
         for token in args:
+            if skip_next:
+                skip_next = False
+                continue
             if token in {"run", "run-script", "exec", "--"}:
+                continue
+            if token in {"-C", "--directory", "-f", "--file", "--makefile"}:
+                skip_next = True
                 continue
             if token.startswith("-"):
                 continue
@@ -148,6 +157,71 @@ def _detect_formatter(verb: str, args: list[str]) -> bool:
 
 def _is_flag(token: str) -> bool:
     return token.startswith("-") and token != "-"
+
+
+# Direct formatter verbs whose positional args are filesystem paths. Their
+# path args must flow through the per-path branch check (REVGUARD A-01): a
+# feature-branch stage cwd does not excuse `ruff format <main-checkout>/...`.
+_PATH_ARG_FORMATTER_VERBS = frozenset({"ruff", "black", "prettier", "eslint", "stylelint"})
+_FORMATTER_SUBCOMMAND_TOKENS = frozenset({"format", "check"})
+
+
+def _formatter_path_args(verb: str, args: list[str]) -> list[str]:
+    """Positional path args of a direct formatter invocation."""
+    if verb not in _PATH_ARG_FORMATTER_VERBS:
+        return []
+    paths: list[str] = []
+    for token in args:
+        if _is_flag(token) or token == "--":
+            continue
+        if token in _FORMATTER_SUBCOMMAND_TOKENS:
+            continue
+        paths.append(token)
+    return paths
+
+
+def _formatter_target_dir(verb: str, args: list[str], stage_cwd: Path | None) -> Path | None:
+    """Directory a formatter stage writes into.
+
+    ``make -C <dir>`` / ``--directory[=]<dir>`` redirects make into ``dir``
+    (REVGUARD A-02); everything else writes relative to the stage cwd.
+    Returns ``None`` (fail-closed) when the redirect target cannot be
+    resolved statically.
+    """
+    if verb != "make":
+        return stage_cwd
+    idx = 0
+    while idx < len(args):
+        token = args[idx]
+        if token == "-C" or token == "--directory":
+            if idx + 1 >= len(args):
+                return None
+            return _resolve_cd_target([args[idx + 1]], stage_cwd)
+        if token.startswith("--directory="):
+            return _resolve_cd_target([token.split("=", 1)[1]], stage_cwd)
+        if token.startswith("-C") and len(token) > 2:
+            return _resolve_cd_target([token[2:]], stage_cwd)
+        idx += 1
+    return stage_cwd
+
+
+def _formatter_stage_locations(
+    verb: str, args: list[str], stage_cwd: Path | None
+) -> list[Path | None]:
+    """Every location a formatter stage writes into.
+
+    The stage's target directory (cwd, or the ``make -C`` redirect) plus each
+    explicit path argument of direct formatter verbs (REVGUARD A-01:
+    ``ruff format <main-checkout>/packages/`` from a feature-branch cwd must
+    still resolve against the main checkout). Directory args carry no
+    protected extension, so they cannot ride the per-file candidate-path
+    check — placement resolution is the only branch-aware gate for them.
+    ``None`` entries mean statically unresolvable (fail-closed).
+    """
+    locations: list[Path | None] = [_formatter_target_dir(verb, args, stage_cwd)]
+    for raw_arg in _formatter_path_args(verb, args):
+        locations.append(_resolve_cd_target([raw_arg], stage_cwd))
+    return locations
 
 
 def _iter_stages(command: str) -> list[tuple[str | None, str, list[str]]]:
@@ -215,6 +289,58 @@ def _resolve_cd_target(args: list[str], current: Path | None) -> Path | None:
         return (current / candidate).resolve(strict=False)
     except OSError:
         return None
+
+
+def _iter_stages_with_cwd(
+    command: str, root_abs: Path | None
+) -> list[tuple[str | None, str, list[str], str, list[str], Path | None]]:
+    """``_iter_stages`` plus per-stage effective cwd and parsed verb/args.
+
+    Threads the effective cwd across ``cd`` stages: a ``cd`` updates the
+    following stage only when joined by ``&&``/``;``
+    (_CD_PROPAGATING_JOINERS); pipe/`&`/`||` joins and unresolvable cd
+    targets degrade to unknown (``None``, fail-closed). Single source of
+    truth for cwd threading shared by ``scan_bash_command`` and
+    ``formatter_stage_cwds``.
+    """
+    stages: list[tuple[str | None, str, list[str], str, list[str], Path | None]] = []
+    effective_cwd = root_abs
+    pending_cd: tuple[Path | None] | None = None
+    for joiner, stage, tokens in _iter_stages(command):
+        if pending_cd is not None:
+            effective_cwd = pending_cd[0] if joiner in _CD_PROPAGATING_JOINERS else None
+            pending_cd = None
+        verb, args = _verb_of(tokens)
+        if verb == "cd":
+            pending_cd = (_resolve_cd_target(args, effective_cwd),)
+        stages.append((joiner, stage, tokens, verb, args, effective_cwd))
+    return stages
+
+
+def formatter_stage_cwds(command: str, repo_root: Path) -> list[Path | None]:
+    """Write locations of every formatter stage in ``command``.
+
+    One or more entries per detected in-place formatter invocation: the
+    directory the formatter writes into (stage cwd, or the ``make -C``
+    redirect target) plus each explicit path argument of direct formatter
+    verbs. ``None`` when a location cannot be resolved statically
+    (fail-closed). Lets consumers like ``_worktree_drift`` reason about
+    formatter placement independently of the branch-aware FU-01 block
+    decision (REVGUARD B-01).
+    """
+    if not command or not command.strip():
+        return []
+    try:
+        root_abs = repo_root.expanduser().resolve(strict=False)
+    except OSError:
+        root_abs = repo_root
+    cwds: list[Path | None] = []
+    for _joiner, _stage, _tokens, verb, args, effective_cwd in _iter_stages_with_cwd(
+        command, root_abs
+    ):
+        if verb and verb != "cd" and _detect_formatter(verb, args):
+            cwds.extend(_formatter_stage_locations(verb, args, effective_cwd))
+    return cwds
 
 
 def _absolutize_target(
@@ -501,17 +627,11 @@ def scan_bash_command(
     # independent of the hook process cwd (pre-fix, relative targets leaked
     # into resolve_path_branch and resolved against whatever directory the
     # hook process happened to run in).
-    effective_cwd: Path | None = root_abs
-    pending_cd: tuple[Path | None] | None = None
-    for joiner, stage, tokens in _iter_stages(command):
-        if pending_cd is not None:
-            effective_cwd = pending_cd[0] if joiner in _CD_PROPAGATING_JOINERS else None
-            pending_cd = None
+    for _joiner, stage, tokens, verb, args, effective_cwd in _iter_stages_with_cwd(
+        command, root_abs
+    ):
         stage_targets = _scan_redirects(tokens)
-        verb, args = _verb_of(tokens)
-        if verb == "cd":
-            pending_cd = (_resolve_cd_target(args, effective_cwd),)
-        elif verb:
+        if verb and verb != "cd":
             if verb == "sed":
                 stage_targets.extend(_scan_sed_in_place(args))
             stage_targets.extend(_scan_verb_targets(verb, args))
@@ -520,7 +640,7 @@ def scan_bash_command(
                 _absolutize_target(t, git_base, root_abs) for t in git_targets
             )
             if _detect_formatter(verb, args):
-                formatter_cwds.append(effective_cwd)
+                formatter_cwds.extend(_formatter_stage_locations(verb, args, effective_cwd))
         stage_targets.extend(_scan_python_inline(stage))
         candidate_paths.extend(
             _absolutize_target(t, effective_cwd, root_abs) for t in stage_targets

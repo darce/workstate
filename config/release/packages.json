@@ -1,0 +1,67 @@
+{
+  "packages": [
+    {
+      "name": "workstate-protocol",
+      "path": "packages/workstate-protocol",
+      "distribution": "workstate-protocol",
+      "artifact_prefix": "workstate_protocol",
+      "publish": true,
+      "test_command": "python -m pytest -q",
+      "changelog": "packages/workstate-protocol/CHANGELOG.md"
+    },
+    {
+      "name": "mcp-workstate-handoff",
+      "path": "packages/mcp-workstate-handoff",
+      "distribution": "mcp-workstate-handoff",
+      "artifact_prefix": "mcp_workstate_handoff",
+      "publish": true,
+      "test_command": "python -m pytest -q",
+      "changelog": "packages/mcp-workstate-handoff/CHANGELOG.md"
+    },
+    {
+      "name": "mcp-workstate-orchestrator",
+      "path": "packages/mcp-workstate-orchestrator",
+      "distribution": "mcp-workstate-orchestrator",
+      "artifact_prefix": "mcp_workstate_orchestrator",
+      "publish": true,
+      "test_command": "python -m pytest -q",
+      "changelog": "packages/mcp-workstate-orchestrator/CHANGELOG.md"
+    },
+    {
+      "name": "workstate-bootstrap",
+      "path": "packages/workstate-bootstrap",
+      "distribution": "workstate-bootstrap",
+      "artifact_prefix": "workstate_bootstrap",
+      "publish": true,
+      "test_command": "python -m pytest -q",
+      "changelog": "packages/workstate-bootstrap/CHANGELOG.md"
+    },
+    {
+      "name": "workstate-codex-bridge",
+      "path": "packages/workstate-codex-bridge",
+      "distribution": "workstate-codex-bridge",
+      "artifact_prefix": "workstate_codex_bridge",
+      "publish": true,
+      "test_command": "python -m pytest -q",
+      "changelog": "packages/workstate-codex-bridge/CHANGELOG.md"
+    },
+    {
+      "name": "workstate-system",
+      "path": "packages/workstate-system",
+      "distribution": "workstate-system",
+      "artifact_prefix": "workstate_system",
+      "publish": true,
+      "test_command": "python -m pytest -q tests/test_distribution_packaging.py",
+      "changelog": "packages/workstate-system/CHANGELOG.md"
+    },
+    {
+      "name": "workstate-stack",
+      "path": "packages/workstate-stack",
+      "distribution": "workstate-stack",
+      "artifact_prefix": "workstate_stack",
+      "publish": true,
+      "test_command": "python -m pytest -q",
+      "changelog": "packages/workstate-stack/CHANGELOG.md"
+    }
+  ]
+}

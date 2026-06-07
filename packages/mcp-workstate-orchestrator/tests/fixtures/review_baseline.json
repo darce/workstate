@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-05-27T00:00:00Z",
+  "captured_by": "Identity total and variable-payload baselines refreshed 2026-05-27 after the static `limits` tool-registry/budget block grew to ~10.3KB (~91% of the combined payload). Re-measured with the canonical BASELINE-PROBE method; the bounded-read ceiling now tracks `identity_variable_bytes` so active-row growth is not hidden by the static limits block.",
+  "fixture_diff_lines": 500,
+  "serial_branch_review_total_tokens": 48000,
+  "identity_response_bytes": 11384,
+  "identity_variable_bytes": 1169,
+  "measurement_method": "Serial /branch-review baseline captured against a ~500-line fixture diff using a neutral task-plan fixture as the stand-in subject. `serial_branch_review_total_tokens` is read from workstate-orchestrator-mcp `turn_metrics` aggregated across all reviewer turns in the serial run. `identity_response_bytes` is `len(json.dumps(get_handoff_state(sections='identity')['data']).encode('utf-8'))` against a populated task_ref and records the combined payload including static limits. `identity_variable_bytes` is the identity data with the static `limits` block removed after the /auto-fix loop has recorded its opening decision, and is the value guarded by the bounded-read ceiling (`identity_variable_bytes` + 10%). The /review-parallel coordinator-side envelope must stay <= 50% of `serial_branch_review_total_tokens`. Numbers in this file are provisional placeholders pending the first live `/review-parallel` dogfood run; once real turn_metrics exist, replace these values with the measured tokens/bytes and bump `captured_at`.",
+  "notes": [
+    "`identity_response_bytes` rebaselined 2026-05-27 from 1551 -> 11384. Breakdown of the BASELINE-PROBE identity payload: `limits`=10320B (~91%), `active`=501B, `compaction_advisory`=481B, `compaction_recommended`=5B. The bounded-read ceiling now uses `identity_variable_bytes`=1169 (identity data minus the static `limits` block after the /auto-fix loop-open decision), so it guards live active-row and advisory growth instead of the fixed registry floor.",
+    "`identity_response_bytes` rebaselined 2026-05-03 from 1159 -> 1551 after active row enrichment added task_plan_abs_path/task_plan_exists/task_plan_resolution; the original baseline never absorbed those fields. Re-measured against the test's hermetic `BASELINE-PROBE` task: `len(json.dumps(get_handoff_state(task_ref='BASELINE-PROBE', sections='identity')['data']).encode('utf-8'))`.",
+    "`identity_response_bytes` is a live measurement of `len(json.dumps(get_handoff_state(task_ref='BASELINE-PROBE', sections='identity')['data']).encode('utf-8'))` taken during bounded-read remediation. Runtime assertions in test_review_parallel_scaffold.py and test_auto_fix_scaffold.py enforce the +10% ceiling against `identity_variable_bytes` on every CI run.",
+    "`serial_branch_review_total_tokens` remains a conservative overestimate: capturing a real value requires a serial `/branch-review` dogfood run against a canonical fixture diff.",
+    "Keep `schema_version` at 1 for this additive metric split; downstream tests assert on this field."
+  ]
+}

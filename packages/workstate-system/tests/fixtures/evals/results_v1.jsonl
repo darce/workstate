@@ -1,0 +1,1 @@
+{"recorded_at":"2026-05-20T20:00:00Z","suite":"docs-hygiene","case":"active-plan-status-metadata","status":"fail","commit":"0000000000000000000000000000000000000000","task_ref":"WORKSTATE-REF-73","metric_payload":{"failures":1},"failure_summary":"active plan missing status metadata"}

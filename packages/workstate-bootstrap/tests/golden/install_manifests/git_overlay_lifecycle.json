@@ -1,0 +1,32 @@
+{
+  "schema_version": 2,
+  "remote_url": "file:///var/folders/20/pqd0ncgj7cb4zjf7t394lht00000gn/T/tmpyk0wo0vr/lc.git",
+  "remote_ref": "v0.1.0",
+  "remote_sha": "ac3b968125ceccfd1502a042269d5e23d8811e28",
+  "profile": "lifecycle",
+  "surfaces": [
+    {
+      "path": "Makefile.d/lifecycle.mk",
+      "source": "lifecycle"
+    },
+    {
+      "path": "scripts/workstate/lifecycle",
+      "source": "lifecycle"
+    }
+  ],
+  "configs": [
+    {
+      "path": "Makefile",
+      "action": "created"
+    },
+    {
+      "path": "core.hooksPath",
+      "action": "set"
+    },
+    {
+      "path": ".gitignore",
+      "action": "created"
+    }
+  ],
+  "mcp_servers": []
+}

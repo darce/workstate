@@ -1,0 +1,137 @@
+{
+  "schema_version": 2,
+  "source_kind": "package",
+  "package_version": "0.2.4",
+  "profile": "all",
+  "surfaces": [
+    {
+      "path": ".github/hooks",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "scripts/hooks",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "docs/workstate/contracts",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "docs/workstate/rules",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "Makefile.d/compaction.mk",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "Makefile.d/plans.mk",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "Makefile.d/plugins.mk",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "Makefile.d/workflows.mk",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": "scripts/workstate/git-plan-cat.sh",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": ".codex/hooks.json",
+      "source": "shared",
+      "provenance_key": "package:0.2.4"
+    },
+    {
+      "path": ".github/prompts",
+      "source": "generated"
+    },
+    {
+      "path": ".workstate/generated/plugins/workstate-system/base",
+      "source": "generated"
+    },
+    {
+      "path": ".workstate/generated/plugins/workstate-system/effective",
+      "source": "generated"
+    },
+    {
+      "path": ".grok/plugins/workstate-system",
+      "source": "generated"
+    },
+    {
+      "path": "Makefile.d/lifecycle.mk",
+      "source": "lifecycle"
+    },
+    {
+      "path": "scripts/workstate/lifecycle",
+      "source": "lifecycle"
+    },
+    {
+      "path": "Makefile.d/update.mk",
+      "source": "lifecycle"
+    },
+    {
+      "path": "scripts/workstate/update.sh",
+      "source": "lifecycle"
+    }
+  ],
+  "configs": [
+    {
+      "path": ".claude-plugin/marketplace.json",
+      "action": "created"
+    },
+    {
+      "path": ".claude/settings.json",
+      "action": "created"
+    },
+    {
+      "path": ".agents/plugins/marketplace.json",
+      "action": "created"
+    },
+    {
+      "path": ".grok/plugins/workstate-system",
+      "action": "created",
+      "kind": "grok_plugin"
+    },
+    {
+      "path": ".codex/config.toml",
+      "action": "applied",
+      "kind": "codex_plugin_activation"
+    },
+    {
+      "path": ".grok/plugins/workstate-system",
+      "action": "applied",
+      "kind": "grok_plugin_activation"
+    },
+    {
+      "path": ".claude/settings.json",
+      "action": "applied",
+      "kind": "claude_plugin_activation"
+    },
+    {
+      "path": "Makefile",
+      "action": "created"
+    },
+    {
+      "path": "core.hooksPath",
+      "action": "set"
+    },
+    {
+      "path": ".gitignore",
+      "action": "created"
+    }
+  ],
+  "mcp_servers": []
+}

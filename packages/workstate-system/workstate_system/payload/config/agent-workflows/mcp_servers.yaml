@@ -1,0 +1,54 @@
+# packages/workstate-system/config/agent-workflows/mcp_servers.yaml
+#
+# Canonical MCP server registration manifest (WORKSTATE-REF-01, implementation note). Single
+# source for every MCP registration surface: the plugin distribution
+# generator reads it directly, and the bootstrap-side root-surface pins
+# in packages/workstate-bootstrap/src/workstate_bootstrap/install.py are
+# generated from it (docs/plans/0028-mcp-registration-single-source-ownership.md
+# supersedes the earlier two-pin-site design).
+#
+# `registration` declares, per harness, which surface owns MCP server
+# registration:
+#   root   — the bootstrap-written root surface (.mcp.json /
+#            .vscode/mcp.json / .codex/config.toml) registers the
+#            servers; emitted plugin trees carry skills only.
+#   plugin — the emitted plugin tree registers the servers via
+#            plugin.json `mcpServers` + a sibling .mcp.json (Claude uses
+#            the camelCase `mcpServers` wrapper; live Codex CLI 0.131.0
+#            only accepts the bare server map).
+# Dual registration (the pre-plan-0028 Claude duplicate) is a bug, never
+# a valid configuration.
+#
+# `plugin_version` is the single source for the emitted plugin.json
+# `"version"` field. Bump in lockstep with epic phase rollouts; see
+# packages/workstate-system/docs/workstate/adrs/ADR-001-agentic-plugin-distribution.md.
+
+version: 2
+plugin_version: "0.2.2"
+registration:
+  claude: root
+  codex: root
+  vscode: root
+  grok: root
+mcp_servers:
+  - name: workstate-handoff-mcp
+    command: uvx
+    args:
+      - mcp-workstate-handoff@0.12.7
+      - --workspace-root
+      - .
+      - serve-stdio
+    harnesses: [claude, codex, grok, vscode]
+  - name: workstate-orchestrator-mcp
+    command: uvx
+    args:
+      # The [bridge] extra pulls workstate-codex-bridge (published on PyPI) so
+      # the `codex-subagent` backend is importable in the uvx-launched runtime;
+      # without it `list_available_backends(probe=true)` reports
+      # declared_not_installed and review-parallel degrades to the in-process
+      # 2-pass fallback.
+      - mcp-workstate-orchestrator[bridge]@0.6.4
+      - --workspace-root
+      - .
+      - serve-stdio
+    harnesses: [claude, codex, grok, vscode]

@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "command": "context",
+  "task_ref": null,
+  "branch": "main",
+  "worktree_path": "/example/repo",
+  "head": "0000000000000000000000000000000000000000",
+  "handoff_projection": "synced",
+  "events": ["context_loaded"],
+  "dirty_summary": {"staged": 0, "unstaged": 0, "untracked": 0, "total": 0},
+  "plan_path": null,
+  "next_command": "make tasks  # list active tasks, then `make task-start TASK=<ref>`",
+  "plan_baseline": null
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "remote_url": "file:///var/folders/20/pqd0ncgj7cb4zjf7t394lht00000gn/T/tmp4qlg56_v/lc.git",
+  "remote_ref": "v0.1.0",
+  "remote_sha": "aac913444fb7d2cd0819c32945f1f4a35fd0b101",
+  "profile": "minimal",
+  "surfaces": [],
+  "configs": [
+    {
+      "path": "core.hooksPath",
+      "action": "set"
+    },
+    {
+      "path": ".gitignore",
+      "action": "created"
+    }
+  ],
+  "mcp_servers": []
+}

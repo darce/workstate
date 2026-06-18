@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "workstate-bootstrap"
+version = "0.10.0"
+description = "Bootstrap CLI that hoists the shared workstate-system surface into consumer repos."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+authors = [{ name = "darce" }]
+dependencies = [
+	"tomlkit>=0.13",
+	"pyyaml>=6",
+	"workstate-protocol>=0.3.0,<0.4.0",
+	"workstate-system>=0.4.2,<0.5.0",
+]
+
+[project.scripts]
+workstate-bootstrap = "workstate_bootstrap.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/darce/workstate"
+Source = "https://github.com/darce/workstate/tree/main/packages/workstate-bootstrap"
+Documentation = "https://github.com/darce/workstate/blob/main/docs/CONSUMER.md"
+Issues = "https://github.com/darce/workstate/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "mcp-workstate-handoff; python_version >= '3.12'"]
+
+[tool.uv.sources]
+mcp-workstate-handoff = { path = "../mcp-workstate-handoff", editable = true }
+workstate-protocol = { path = "../workstate-protocol", editable = true }
+workstate-system = { path = "../workstate-system", editable = true }
+
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["workstate_bootstrap"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["workstate_bootstrap", "hatch_build.py", "_scrub_core.py"]
+exclude = ["**/__pycache__", "**/*.pyc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

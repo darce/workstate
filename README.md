@@ -27,8 +27,9 @@ uvx --from "git+https://github.com/darce/workstate@v0.1.24#subdirectory=packages
 One command does all of it: materializes the skill and hook surfaces,
 registers the two MCP servers (`mcp-workstate-handoff`,
 `mcp-workstate-orchestrator`), provisions `.task-state/handoff.db`, and
-sets `core.hooksPath` so the enforcement hooks run at commit, push,
-checkout, merge, rewrite, and post-commit points. Restart your agent so
+sets `core.hooksPath` so the enforcement hooks fire throughout the git
+lifecycle — from commit and push through checkout, merge, rewrite, and
+post-commit. Restart your agent so
 it picks up the new surfaces, then:
 
 ```bash
@@ -44,8 +45,8 @@ or start from a vague idea inside the agent session:
 
 `workstate-bootstrap doctor --target .` detects drift after upgrades;
 `status`, `update`, and `repair` round out the lifecycle. See
-[`docs/CONSUMER.md`](docs/CONSUMER.md) for upgrades, MCP-server
-overrides, and skill overrides.
+[`docs/CONSUMER.md`](docs/CONSUMER.md) for the upgrade workflow and for
+overriding MCP servers or skills.
 
 ## The command surface
 
@@ -121,8 +122,8 @@ know.
 
 ## One state, any agent
 
-Workstate generates a native surface for each harness from a single
-manifest, so every agent sees identical commands and the same MCP tools:
+Workstate builds each harness's surface from one manifest, so the
+commands and MCP tools are the same whichever agent you run:
 
 | Harness | Generated surface |
 | --- | --- |
@@ -133,7 +134,7 @@ manifest, so every agent sees identical commands and the same MCP tools:
 | VS Code Copilot | `.github/prompts/` |
 
 A Claude Code session and a Codex session pointed at the same workspace
-see the same task rows, the same open findings, the same dashboard.
+read the same task rows, open findings, and dashboard.
 Each session opens by calling `load_session`, which returns a ranked
 context packet — active task, open findings, recent decisions, touched
 files — so the agent resumes from the load-bearing state rather than a
@@ -141,12 +142,12 @@ cold prompt, whichever vendor it is.
 Switching vendors mid-task costs nothing, which also means no single
 vendor's session format owns your project history. The same property
 covers a single long session: compaction records and session-start
-reinjection hooks can rehydrate the working context from MCP instead of
-making the transcript summary the only source of truth.
+reinjection hooks can rebuild the working context from MCP instead of
+leaning on the transcript summary alone.
 
 ## Review artifacts
 
-The harness is built so different agents can review each other's work:
+Different agents can review each other's work:
 
 1. The authoring agent records intent via `set_handoff_state` and
    `record_event`, then opens a branch.
@@ -163,14 +164,15 @@ The harness is built so different agents can review each other's work:
 Because author and reviewer are decoupled through the database, two
 adversarial passes from independent models compose without either agent
 trusting the other's transcript. For larger work, the orchestrator
-server runs multiple worktree lanes with worker daemons, lane messaging,
-plan cursors, and per-turn token metrics.
+server runs several worktree lanes behind worker daemons; lane messaging
+and plan cursors coordinate them, and per-turn token metrics give
+visibility.
 
 ## What the hooks enforce
 
-Skills are suggestions; hooks are not. Installed via `core.hooksPath`
-and harness hook configs, they hold regardless of which agent is
-driving:
+Skills are suggestions; hooks are not. Installed through `core.hooksPath`
+and the harness hook configs, they apply no matter which agent is
+running:
 
 - Edits on `main` are refused outside explicitly permitted surfaces.
 - Branch names must match the grammar: `feature/<task-ref>` with a
@@ -183,7 +185,8 @@ driving:
 ## Install integrity
 
 The bootstrap installer writes a ledger at `.workstate-bootstrap.json`
-with the source kind, pinned ref or package version, generated surfaces,
+recording where the install came from — its source kind and pinned ref
+or package version — alongside what it produced: the generated surfaces,
 managed MCP servers, and install steps. `workstate-bootstrap doctor`
 checks that ledger against the files on disk; `repair` restores drifted
 surfaces, `update` moves the overlay forward, and durable
@@ -194,8 +197,9 @@ effective plugin tree instead of being overwritten on the next install.
 
 This monorepo contains eight package directories. Seven publish to PyPI;
 `mcp-workstate-canvas` is private/internal today. Cross-cutting changes
-land atomically from one tree. Consumers install via the bootstrap CLI
-and the `vX.Y.Z` distribution tag, not this source.
+land atomically from one tree. Consumers install with the bootstrap CLI
+against a `vX.Y.Z` distribution tag; building straight from this source
+is for development.
 
 | Package | Role |
 | --- | --- |
